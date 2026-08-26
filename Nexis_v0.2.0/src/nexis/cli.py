@@ -11,7 +11,7 @@ from . import __version__
 from .core.baseline import compare_devices, establish
 from .core.risk import assess_network_change
 from .core.store import load_baseline, recent_events, record_event
-from .modules import crypto, geo, host, network, recon, tools, web, wifi
+from .modules import crypto, footprint, geo, host, network, recon, tools, web, wifi
 
 C = "\033[96m"
 G = "\033[92m"
@@ -31,7 +31,7 @@ def banner() -> None:
 ██╔██╗ ██║█████╗   ╚███╔╝ ██║███████╗
 ██║╚██╗██║██╔══╝   ██╔██╗ ██║╚════██║
 ██║ ╚████║███████╗██╔╝ ██╗██║███████║
-╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝╚═╝╚══════╝
+╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝╚══════╝
 """, C))
     print(f"  Nexis v{__version__} — Security Intelligence Framework\n")
 
@@ -53,6 +53,7 @@ Recon
   recon dns <hostname>
   recon geo <public-ip>
   recon myip
+  recon footprint <organisation-or-project> <country>
 
 Network
   network info
@@ -81,10 +82,12 @@ tools tshark
 events [count]
 report
 watch network [seconds]
+
+Footprint targets organisations, brands and projects only. Nexis does not build personal dossiers or collect sensitive personal data.
 """)
 
     def do_modules(self, arg):
-        print("""RECON        IP, DNS and public-IP geolocation
+        print("""RECON        IP, DNS, public-IP geolocation and public organisation footprint
 NETWORK      Discovery, baseline, change detection, Nmap
 WIFI         Local Wi-Fi information
 CRYPTO       Hash identification + file hashing
@@ -111,8 +114,14 @@ REPORT       Session JSON output""")
                 print(json.dumps(geo.lookup(p[1]), indent=2))
             elif len(p) == 1 and p[0].lower() == "myip":
                 print(json.dumps(geo.my_public_ip(), indent=2))
+            elif len(p) >= 3 and p[0].lower() == "footprint":
+                name = p[1]
+                country = " ".join(p[2:])
+                result = footprint.footprint_organization(name, country)
+                record_event("public_footprint", {"name": name, "country": country, "result_count": result["result_count"]})
+                print(json.dumps(result, indent=2))
             else:
-                print(colour("[!] Usage: recon ip|dns|geo <value> | recon myip", R))
+                print(colour("[!] Usage: recon ip|dns|geo <value> | recon myip | recon footprint <organisation-or-project> <country>", R))
         except Exception as exc:
             print(colour(f"[!] {exc}", R))
 
@@ -167,9 +176,7 @@ REPORT       Session JSON output""")
                     "public_ip_geolocation": None,
                     "assessment": "Observation only; no compromise is inferred."
                 }
-                if not any(part == "." for part in ip.split(".")):
-                    details["public_ip_geolocation"] = None
-                else:
+                if not device.get("this_device"):
                     try:
                         details["public_ip_geolocation"] = geo.lookup(ip)
                     except Exception:
@@ -204,7 +211,7 @@ REPORT       Session JSON output""")
                 for algorithm, digest in crypto.file_hash(p[1], p[2:] or ["sha256"]).items():
                     print(f"{algorithm.upper():>10}: {digest}")
             else:
-                print(colour("[!] Usage: crypto identify <value> | crypto hash <file> [algorithms...]", R))
+                print(colour("[!] Usage: crypto identify <hash-or-string> | crypto hash <file> [algorithms...]", R))
         except Exception as exc:
             print(colour(f"[!] {exc}", R))
 
