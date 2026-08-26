@@ -11,7 +11,7 @@ from . import __version__
 from .core.baseline import compare_devices, establish
 from .core.risk import assess_network_change
 from .core.store import load_baseline, recent_events, record_event
-from .modules import crypto, host, network, recon, web, wifi
+from .modules import crypto, geo, host, network, recon, tools, web, wifi
 
 C = "\033[96m"
 G = "\033[92m"
@@ -51,6 +51,8 @@ exit / quit
 Recon
   recon ip <address-or-host>
   recon dns <hostname>
+  recon geo <public-ip>
+  recon myip
 
 Network
   network info
@@ -71,21 +73,26 @@ Web / Host
   web headers <authorised-url>
   host info
 
-Intelligence
-  events [count]
-  report
-  watch network [seconds]
+tools status
+  Show locally installed security tools.
+tools tshark
+  Show capture interfaces exposed by TShark.
+
+events [count]
+report
+watch network [seconds]
 """)
 
     def do_modules(self, arg):
-        print("""RECON       IP and DNS information
-NETWORK     Discovery, baseline and Nmap
-WIFI        Local Wi-Fi information
-CRYPTO      Hash identification + file hashing
-WEB         HTTP security-header inspection
-HOST        Local host information
-INTELLIGENCE Baseline, events, correlation and monitoring
-REPORT      Session JSON output""")
+        print("""RECON        IP, DNS and public-IP geolocation
+NETWORK      Discovery, baseline, change detection, Nmap
+WIFI         Local Wi-Fi information
+CRYPTO       Hash identification + file hashing
+WEB          HTTP security-header inspection
+HOST         Local host information
+TOOLS        Detect Nmap/TShark/Metasploit installations
+INTELLIGENCE Baseline, events and monitoring
+REPORT       Session JSON output""")
 
     def do_version(self, arg):
         print(f"Nexis v{__version__}")
@@ -100,14 +107,21 @@ REPORT      Session JSON output""")
                 print(json.dumps(recon.ip_info(p[1]), indent=2))
             elif len(p) == 2 and p[0].lower() == "dns":
                 print(json.dumps({"hostname": p[1], "addresses": recon.dns_info(p[1])}, indent=2))
+            elif len(p) == 2 and p[0].lower() == "geo":
+                print(json.dumps(geo.lookup(p[1]), indent=2))
+            elif len(p) == 1 and p[0].lower() == "myip":
+                print(json.dumps(geo.my_public_ip(), indent=2))
             else:
-                print(colour("[!] Usage: recon ip <value> | recon dns <hostname>", R))
+                print(colour("[!] Usage: recon ip|dns|geo <value> | recon myip", R))
         except Exception as exc:
             print(colour(f"[!] {exc}", R))
 
     def _discover(self, subnet=None):
         snapshot = network.discover(subnet)
-        record_event("network_snapshot", {"subnet": snapshot["subnet"], "device_count": len(snapshot["devices"])})
+        record_event("network_snapshot", {
+            "subnet": snapshot["subnet"],
+            "device_count": len(snapshot["devices"])
+        })
         return snapshot
 
     def _print_devices(self, snapshot):
@@ -118,10 +132,7 @@ REPORT      Session JSON output""")
         for device in snapshot["devices"]:
             latency = "-" if device.get("latency_ms") is None else f"{device['latency_ms']:.1f} ms"
             name = device.get("hostname") or "unknown"
-            if device.get("this_device"):
-                status = "THIS PC"
-            else:
-                status = device.get("status", "ONLINE")
+            status = "THIS PC" if device.get("this_device") else device.get("status", "ONLINE")
             print(f"{device['ip']:<18}{status:<12}{latency:<12}{name[:31]:<32}")
         print(f"\n{len(snapshot['devices'])} device(s) observed")
 
@@ -137,6 +148,7 @@ REPORT      Session JSON output""")
                 snapshot = self._discover()
                 establish(snapshot)
                 print(colour("[+] Baseline established.", G))
+                self._print_devices(snapshot)
             elif p and p[0].lower() == "changes":
                 snapshot = self._discover(p[1] if len(p) > 1 else None)
                 delta = compare_devices(load_baseline(), snapshot)
@@ -149,11 +161,21 @@ REPORT      Session JSON output""")
                 if not device:
                     print(colour("[?] Device not observed on the current local discovery.", Y))
                     return
-                print(json.dumps({
+                details = {
                     "target": device,
                     "scope": "local-network-observation",
+                    "public_ip_geolocation": None,
                     "assessment": "Observation only; no compromise is inferred."
-                }, indent=2))
+                }
+                if not any(part == "." for part in ip.split(".")):
+                    details["public_ip_geolocation"] = None
+                else:
+                    try:
+                        details["public_ip_geolocation"] = geo.lookup(ip)
+                    except Exception:
+                        pass
+                record_event("investigation", details)
+                print(json.dumps(details, indent=2))
             elif len(p) == 2 and p[0].lower() == "nmap":
                 print(network.nmap_discover(p[1]))
             else:
@@ -182,7 +204,7 @@ REPORT      Session JSON output""")
                 for algorithm, digest in crypto.file_hash(p[1], p[2:] or ["sha256"]).items():
                     print(f"{algorithm.upper():>10}: {digest}")
             else:
-                print(colour("[!] Invalid crypto command.", R))
+                print(colour("[!] Usage: crypto identify <value> | crypto hash <file> [algorithms...]", R))
         except Exception as exc:
             print(colour(f"[!] {exc}", R))
 
@@ -202,20 +224,26 @@ REPORT      Session JSON output""")
         else:
             print(colour("[!] Usage: host info", R))
 
+    def do_tools(self, arg):
+        p = shlex.split(arg)
+        try:
+            if p == ["status"]:
+                print(json.dumps(tools.status(), indent=2))
+            elif p == ["tshark"]:
+                print(tools.tshark_interfaces())
+            else:
+                print(colour("[!] Usage: tools status | tools tshark", R))
+        except Exception as exc:
+            print(colour(f"[!] {exc}", R))
+
     def do_events(self, arg):
         p = shlex.split(arg)
-        limit = 20
-        if p:
-            try:
-                limit = max(1, min(200, int(p[0])))
-            except ValueError:
-                print(colour("[!] events [count]", R))
-                return
-        events = recent_events(limit)
-        if not events:
-            print("No events recorded.")
+        try:
+            limit = max(1, min(200, int(p[0]))) if p else 20
+        except ValueError:
+            print(colour("[!] Usage: events [count]", R))
             return
-        for event in events:
+        for event in recent_events(limit):
             print(json.dumps(event, separators=(",", ":")))
 
     def do_watch(self, arg):
@@ -223,13 +251,11 @@ REPORT      Session JSON output""")
         if not p or p[0].lower() != "network":
             print(colour("[!] Usage: watch network [seconds]", R))
             return
-        interval = 30
-        if len(p) > 1:
-            try:
-                interval = max(5, int(p[1]))
-            except ValueError:
-                print(colour("[!] Interval must be an integer number of seconds.", R))
-                return
+        try:
+            interval = max(5, int(p[1])) if len(p) > 1 else 30
+        except ValueError:
+            print(colour("[!] Interval must be an integer number of seconds.", R))
+            return
         print(colour("[+] Network watch started. Press Ctrl+C to stop.", G))
         previous = load_baseline()
         try:
@@ -237,9 +263,10 @@ REPORT      Session JSON output""")
                 snapshot = self._discover()
                 delta = compare_devices(previous, snapshot)
                 assessment = assess_network_change(delta)
-                if any(delta.values()):
+                if delta.get("added") or delta.get("removed"):
                     print(colour("\n[!] Network baseline change detected", Y))
                     print(json.dumps({"changes": delta, "assessment": assessment}, indent=2))
+                    record_event("network_change", {"changes": delta, "assessment": assessment})
                 previous = snapshot
                 time.sleep(interval)
         except KeyboardInterrupt:
