@@ -7,6 +7,9 @@ TOOL_COMMANDS = {
     "nmap": ["nmap", "--version"],
     "tshark": ["tshark", "--version"],
     "msfconsole": ["msfconsole", "--version"],
+    "amass": ["amass", "-version"],
+    "spiderfoot": ["sf.py", "--version"],
+    "whatweb": ["whatweb", "--version"],
 }
 
 
@@ -17,7 +20,7 @@ def status() -> dict[str, dict[str, str | bool]]:
         entry: dict[str, str | bool] = {"installed": bool(path), "path": path or ""}
         if path:
             try:
-                proc = subprocess.run(command, capture_output=True, text=True, timeout=5)
+                proc = subprocess.run(command, capture_output=True, text=True, timeout=7)
                 output = (proc.stdout + "\n" + proc.stderr).strip().splitlines()
                 if output:
                     entry["version"] = output[0][:160]
