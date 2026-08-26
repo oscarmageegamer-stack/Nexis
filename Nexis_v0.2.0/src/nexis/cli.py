@@ -11,7 +11,7 @@ from . import __version__
 from .core.baseline import compare_devices, establish
 from .core.risk import assess_network_change
 from .core.store import load_baseline, recent_events, record_event
-from .modules import crypto, footprint, geo, host, network, password_audit, recon, tools, web, wifi, website
+from .modules import crypto, footprint, geo, host, network, password_audit, recon, social, tools, web, wifi, website
 
 C = "\033[96m"
 G = "\033[92m"
@@ -31,7 +31,7 @@ def banner() -> None:
 ██╔██╗ ██║█████╗   ╚███╔╝ ██║███████╗
 ██║╚██╗██║██╔══╝   ██╔██╗ ██║╚════██║
 ██║ ╚████║███████╗██╔╝ ██╗██║███████║
-╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝╚═╝╚══════╝
+╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝╚══════╝
 """, C))
     print(f"  Nexis v{__version__} — Security Intelligence Framework\n")
 
@@ -54,6 +54,7 @@ Recon
   recon geo <public-ip>
   recon myip
   recon footprint <organisation-or-project> <country>
+  recon social <public-username>
 
 Network
   network info
@@ -89,11 +90,11 @@ events [count]
 report
 watch network [seconds]
 
-Footprint targets organisations, brands and projects only. Website intelligence is passive and public-facing.
+Social recon checks public profile URLs for a supplied username only. It does not access private accounts or build personal dossiers.
 """)
 
     def do_modules(self, arg):
-        print("""RECON        IP, DNS, public-IP geolocation and public footprint
+        print("""RECON        IP, DNS, public-IP geolocation, organisation footprint, social username checks
 NETWORK      Discovery, baseline, change detection, Nmap
 WIFI         Local Wi-Fi information
 CRYPTO       Hash identification + file hashing + password-storage audit
@@ -126,17 +127,18 @@ REPORT       Session JSON output""")
                 result = footprint.footprint_organization(name, country)
                 record_event("public_footprint", {"name": name, "country": country, "result_count": result["result_count"]})
                 print(json.dumps(result, indent=2))
+            elif len(p) == 2 and p[0].lower() == "social":
+                result = social.search_username(p[1])
+                record_event("social_username_recon", {"username": result["username"], "profiles_found": result["public_profiles_found"]})
+                print(json.dumps(result, indent=2))
             else:
-                print(colour("[!] Usage: recon ip|dns|geo <value> | recon myip | recon footprint <organisation-or-project> <country>", R))
+                print(colour("[!] Usage: recon ip|dns|geo <value> | recon myip | recon footprint <organisation-or-project> <country> | recon social <username>", R))
         except Exception as exc:
             print(colour(f"[!] {exc}", R))
 
     def _discover(self, subnet=None):
         snapshot = network.discover(subnet)
-        record_event("network_snapshot", {
-            "subnet": snapshot["subnet"],
-            "device_count": len(snapshot["devices"])
-        })
+        record_event("network_snapshot", {"subnet": snapshot["subnet"], "device_count": len(snapshot["devices"])})
         return snapshot
 
     def _print_devices(self, snapshot):
@@ -187,10 +189,8 @@ REPORT       Session JSON output""")
             print(colour(f"[!] {exc}", R))
 
     def do_wifi(self, arg):
-        if arg.strip().lower() == "info":
-            print(wifi.info())
-        else:
-            print(colour("[!] Usage: wifi info", R))
+        if arg.strip().lower() == "info": print(wifi.info())
+        else: print(colour("[!] Usage: wifi info", R))
 
     def do_crypto(self, arg):
         p = shlex.split(arg)
@@ -206,29 +206,20 @@ REPORT       Session JSON output""")
             elif len(p) >= 2 and p[0].lower() == "password-audit":
                 print(json.dumps(password_audit.audit_hash(p[1]), indent=2))
             else:
-                print(colour("[!] Usage: crypto identify <value> | crypto hash <file> [algorithms...] | crypto password-audit <hash>", R))
-        except Exception as exc:
-            print(colour(f"[!] {exc}", R))
+                print(colour("[!] Usage: crypto identify <hash-or-string> | crypto hash <file> [algorithms...] | crypto password-audit <hash>", R))
+        except Exception as exc: print(colour(f"[!] {exc}", R))
 
     def do_web(self, arg):
         p = shlex.split(arg)
         try:
-            if len(p) == 2 and p[0].lower() == "headers":
-                print(json.dumps(web.headers(p[1]), indent=2))
+            if len(p) == 2 and p[0].lower() == "headers": print(json.dumps(web.headers(p[1]), indent=2))
             elif len(p) == 2 and p[0].lower() == "inspect":
-                result = website.inspect(p[1])
-                record_event("web_inspection", {"url": result.get("url"), "status": result.get("status")})
-                print(json.dumps(result, indent=2))
-            elif len(p) == 2 and p[0].lower() == "public-files":
-                print(json.dumps(website.public_files(p[1]), indent=2))
+                result = website.inspect(p[1]); record_event("web_inspection", {"url": result.get("url"), "status": result.get("status")}); print(json.dumps(result, indent=2))
+            elif len(p) == 2 and p[0].lower() == "public-files": print(json.dumps(website.public_files(p[1]), indent=2))
             elif len(p) == 2 and p[0].lower() == "history":
-                result = website.archive_history(p[1])
-                record_event("web_history", {"url": p[1], "captures": len(result.get("captures", []))})
-                print(json.dumps(result, indent=2))
-            else:
-                print(colour("[!] Usage: web headers|inspect|public-files|history <url>", R))
-        except Exception as exc:
-            print(colour(f"[!] {exc}", R))
+                result = website.archive_history(p[1]); record_event("web_history", {"url": p[1], "captures": len(result.get("captures", []))}); print(json.dumps(result, indent=2))
+            else: print(colour("[!] Usage: web headers|inspect|public-files|history <url>", R))
+        except Exception as exc: print(colour(f"[!] {exc}", R))
 
     def do_host(self, arg):
         if arg.strip().lower() == "info": print(json.dumps(host.info(), indent=2))
@@ -250,8 +241,7 @@ REPORT       Session JSON output""")
 
     def do_watch(self, arg):
         p = shlex.split(arg)
-        if not p or p[0].lower() != "network":
-            print(colour("[!] Usage: watch network [seconds]", R)); return
+        if not p or p[0].lower() != "network": print(colour("[!] Usage: watch network [seconds]", R)); return
         try: interval = max(5, int(p[1])) if len(p) > 1 else 30
         except ValueError: print(colour("[!] Interval must be an integer number of seconds.", R)); return
         print(colour("[+] Network watch started. Press Ctrl+C to stop.", G))
@@ -267,8 +257,7 @@ REPORT       Session JSON output""")
                     record_event("network_change", {"changes": delta, "assessment": assessment})
                 previous = snapshot
                 time.sleep(interval)
-        except KeyboardInterrupt:
-            print("\n[+] Network watch stopped.")
+        except KeyboardInterrupt: print("\n[+] Network watch stopped.")
 
     def do_report(self, arg):
         out = Path("reports"); out.mkdir(exist_ok=True)
