@@ -11,7 +11,7 @@ from . import __version__
 from .core.baseline import compare_devices, establish
 from .core.risk import assess_network_change
 from .core.store import load_baseline, recent_events, record_event
-from .modules import crypto, footprint, geo, host, network, recon, tools, web, wifi
+from .modules import crypto, footprint, geo, host, network, password_audit, recon, tools, web, wifi, website
 
 C = "\033[96m"
 G = "\033[92m"
@@ -31,7 +31,7 @@ def banner() -> None:
 ██╔██╗ ██║█████╗   ╚███╔╝ ██║███████╗
 ██║╚██╗██║██╔══╝   ██╔██╗ ██║╚════██║
 ██║ ╚████║███████╗██╔╝ ██╗██║███████║
-╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝╚══════╝
+╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝╚═╝╚══════╝
 """, C))
     print(f"  Nexis v{__version__} — Security Intelligence Framework\n")
 
@@ -69,9 +69,15 @@ Wi-Fi
 Crypto
   crypto identify <hash-or-string>
   crypto hash <file> [sha256 sha512 ...]
+  crypto password-audit <hash>
 
-Web / Host
+Web
   web headers <authorised-url>
+  web inspect <authorised-url>
+  web public-files <authorised-url>
+  web history <public-url>
+
+Host
   host info
 
 tools status
@@ -83,18 +89,18 @@ events [count]
 report
 watch network [seconds]
 
-Footprint targets organisations, brands and projects only. Nexis does not build personal dossiers or collect sensitive personal data.
+Footprint targets organisations, brands and projects only. Website intelligence is passive and public-facing.
 """)
 
     def do_modules(self, arg):
-        print("""RECON        IP, DNS, public-IP geolocation and public organisation footprint
+        print("""RECON        IP, DNS, public-IP geolocation and public footprint
 NETWORK      Discovery, baseline, change detection, Nmap
 WIFI         Local Wi-Fi information
-CRYPTO       Hash identification + file hashing
-WEB          HTTP security-header inspection
+CRYPTO       Hash identification + file hashing + password-storage audit
+WEB          Headers, TLS, public files and archive metadata
 HOST         Local host information
 TOOLS        Detect Nmap/TShark/Metasploit installations
-INTELLIGENCE Baseline, events and monitoring
+INTELLIGENCE Baseline, events, monitoring and risk assessment
 REPORT       Session JSON output""")
 
     def do_version(self, arg):
@@ -170,17 +176,7 @@ REPORT       Session JSON output""")
                 if not device:
                     print(colour("[?] Device not observed on the current local discovery.", Y))
                     return
-                details = {
-                    "target": device,
-                    "scope": "local-network-observation",
-                    "public_ip_geolocation": None,
-                    "assessment": "Observation only; no compromise is inferred."
-                }
-                if not device.get("this_device"):
-                    try:
-                        details["public_ip_geolocation"] = geo.lookup(ip)
-                    except Exception:
-                        pass
+                details = {"target": device, "scope": "local-network-observation", "public_ip_geolocation": None, "assessment": "Observation only; no compromise is inferred."}
                 record_event("investigation", details)
                 print(json.dumps(details, indent=2))
             elif len(p) == 2 and p[0].lower() == "nmap":
@@ -203,66 +199,61 @@ REPORT       Session JSON output""")
                 results = crypto.identify(p[1])
                 if results:
                     print(colour("[+] Likely formats:", G))
-                    for result in results:
-                        print(f"  • {result}")
-                else:
-                    print(colour("[?] No confident match.", Y))
+                    for result in results: print(f"  • {result}")
+                else: print(colour("[?] No confident match.", Y))
             elif len(p) >= 2 and p[0].lower() == "hash":
-                for algorithm, digest in crypto.file_hash(p[1], p[2:] or ["sha256"]).items():
-                    print(f"{algorithm.upper():>10}: {digest}")
+                for algorithm, digest in crypto.file_hash(p[1], p[2:] or ["sha256"]).items(): print(f"{algorithm.upper():>10}: {digest}")
+            elif len(p) >= 2 and p[0].lower() == "password-audit":
+                print(json.dumps(password_audit.audit_hash(p[1]), indent=2))
             else:
-                print(colour("[!] Usage: crypto identify <hash-or-string> | crypto hash <file> [algorithms...]", R))
+                print(colour("[!] Usage: crypto identify <value> | crypto hash <file> [algorithms...] | crypto password-audit <hash>", R))
         except Exception as exc:
             print(colour(f"[!] {exc}", R))
 
     def do_web(self, arg):
         p = shlex.split(arg)
-        if len(p) == 2 and p[0].lower() == "headers":
-            try:
+        try:
+            if len(p) == 2 and p[0].lower() == "headers":
                 print(json.dumps(web.headers(p[1]), indent=2))
-            except Exception as exc:
-                print(colour(f"[!] {exc}", R))
-        else:
-            print(colour("[!] Usage: web headers <authorised-url>", R))
+            elif len(p) == 2 and p[0].lower() == "inspect":
+                result = website.inspect(p[1])
+                record_event("web_inspection", {"url": result.get("url"), "status": result.get("status")})
+                print(json.dumps(result, indent=2))
+            elif len(p) == 2 and p[0].lower() == "public-files":
+                print(json.dumps(website.public_files(p[1]), indent=2))
+            elif len(p) == 2 and p[0].lower() == "history":
+                result = website.archive_history(p[1])
+                record_event("web_history", {"url": p[1], "captures": len(result.get("captures", []))})
+                print(json.dumps(result, indent=2))
+            else:
+                print(colour("[!] Usage: web headers|inspect|public-files|history <url>", R))
+        except Exception as exc:
+            print(colour(f"[!] {exc}", R))
 
     def do_host(self, arg):
-        if arg.strip().lower() == "info":
-            print(json.dumps(host.info(), indent=2))
-        else:
-            print(colour("[!] Usage: host info", R))
+        if arg.strip().lower() == "info": print(json.dumps(host.info(), indent=2))
+        else: print(colour("[!] Usage: host info", R))
 
     def do_tools(self, arg):
         p = shlex.split(arg)
         try:
-            if p == ["status"]:
-                print(json.dumps(tools.status(), indent=2))
-            elif p == ["tshark"]:
-                print(tools.tshark_interfaces())
-            else:
-                print(colour("[!] Usage: tools status | tools tshark", R))
-        except Exception as exc:
-            print(colour(f"[!] {exc}", R))
+            if p == ["status"]: print(json.dumps(tools.status(), indent=2))
+            elif p == ["tshark"]: print(tools.tshark_interfaces())
+            else: print(colour("[!] Usage: tools status | tools tshark", R))
+        except Exception as exc: print(colour(f"[!] {exc}", R))
 
     def do_events(self, arg):
         p = shlex.split(arg)
-        try:
-            limit = max(1, min(200, int(p[0]))) if p else 20
-        except ValueError:
-            print(colour("[!] Usage: events [count]", R))
-            return
-        for event in recent_events(limit):
-            print(json.dumps(event, separators=(",", ":")))
+        try: limit = max(1, min(200, int(p[0]))) if p else 20
+        except ValueError: print(colour("[!] Usage: events [count]", R)); return
+        for event in recent_events(limit): print(json.dumps(event, separators=(",", ":")))
 
     def do_watch(self, arg):
         p = shlex.split(arg)
         if not p or p[0].lower() != "network":
-            print(colour("[!] Usage: watch network [seconds]", R))
-            return
-        try:
-            interval = max(5, int(p[1])) if len(p) > 1 else 30
-        except ValueError:
-            print(colour("[!] Interval must be an integer number of seconds.", R))
-            return
+            print(colour("[!] Usage: watch network [seconds]", R)); return
+        try: interval = max(5, int(p[1])) if len(p) > 1 else 30
+        except ValueError: print(colour("[!] Interval must be an integer number of seconds.", R)); return
         print(colour("[+] Network watch started. Press Ctrl+C to stop.", G))
         previous = load_baseline()
         try:
@@ -280,36 +271,26 @@ REPORT       Session JSON output""")
             print("\n[+] Network watch stopped.")
 
     def do_report(self, arg):
-        out = Path("reports")
-        out.mkdir(exist_ok=True)
+        out = Path("reports"); out.mkdir(exist_ok=True)
         file = out / "nexis_session.json"
         payload = {"tool": "Nexis", "version": __version__, "events": recent_events(200)}
         file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(colour(f"[+] Report written to {file.resolve()}", G))
 
-    def do_exit(self, arg):
-        print("Nexis shutting down.")
-        return True
-
-    def do_quit(self, arg):
-        return self.do_exit(arg)
+    def do_exit(self, arg): print("Nexis shutting down."); return True
+    def do_quit(self, arg): return self.do_exit(arg)
 
     def default(self, line):
         value = line.strip()
-        if not value:
-            return
+        if not value: return
         results = crypto.identify(value)
         if results:
             print(colour("[+] This looks like:", G))
-            for result in results:
-                print(f"  • {result}")
-        else:
-            print(colour("[?] Unknown command. Type 'help'.", Y))
+            for result in results: print(f"  • {result}")
+        else: print(colour("[?] Unknown command. Type 'help'.", Y))
 
 
 def main():
     banner()
-    try:
-        Console().cmdloop()
-    except KeyboardInterrupt:
-        print("\nNexis shutting down.")
+    try: Console().cmdloop()
+    except KeyboardInterrupt: print("\nNexis shutting down.")
