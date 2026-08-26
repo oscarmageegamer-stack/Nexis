@@ -11,6 +11,7 @@ from . import __version__
 from .core.baseline import compare_devices, establish
 from .core.risk import assess_network_change
 from .core.store import load_baseline, recent_events, record_event
+from .core.retention import retention_status, rotate_daily_app_log
 from .modules import crypto, footprint, geo, host, network, password_audit, recon, social, tools, web, wifi, website
 
 C = "\033[96m"
@@ -29,7 +30,7 @@ def banner() -> None:
 ███╗   ██╗███████╗██╗  ██╗██╗███████╗
 ████╗  ██║██╔════╝╚██╗██╔╝██║██╔════╝
 ██╔██╗ ██║█████╗   ╚███╔╝ ██║███████╗
-██║╚██╗██║██╔══╝   ██╔██╗ ██║╚════██║
+██║╚██╗██║██╔══╝   ██╔██╗ ██║╚══════╝
 ██║ ╚████║███████╗██╔╝ ██╗██║███████║
 ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝╚══════╝
 """, C))
@@ -82,15 +83,14 @@ Host
   host info
 
 tools status
-  Show locally installed security tools.
 tools tshark
-  Show capture interfaces exposed by TShark.
 
 events [count]
 report
 watch network [seconds]
+retention status
 
-Social recon checks public profile URLs for a supplied username only. It does not access private accounts or build personal dossiers.
+Footprint/social/website features are passive public-source reconnaissance and do not access private accounts or build personal dossiers.
 """)
 
     def do_modules(self, arg):
@@ -100,9 +100,10 @@ WIFI         Local Wi-Fi information
 CRYPTO       Hash identification + file hashing + password-storage audit
 WEB          Headers, TLS, public files and archive metadata
 HOST         Local host information
-TOOLS        Detect Nmap/TShark/Metasploit installations
+TOOLS        Detect installed Nmap/TShark/Metasploit
 INTELLIGENCE Baseline, events, monitoring and risk assessment
-REPORT       Session JSON output""")
+REPORT       Session JSON output
+RETENTION    Nexis-owned daily privacy retention""")
 
     def do_version(self, arg):
         print(f"Nexis v{__version__}")
@@ -266,6 +267,13 @@ REPORT       Session JSON output""")
         file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(colour(f"[+] Report written to {file.resolve()}", G))
 
+    def do_retention(self, arg):
+        p = shlex.split(arg)
+        if p == ["status"]:
+            print(json.dumps(retention_status(), indent=2))
+        else:
+            print(colour("[!] Usage: retention status", R))
+
     def do_exit(self, arg): print("Nexis shutting down."); return True
     def do_quit(self, arg): return self.do_exit(arg)
 
@@ -280,6 +288,7 @@ REPORT       Session JSON output""")
 
 
 def main():
+    rotate_daily_app_log()
     banner()
     try: Console().cmdloop()
     except KeyboardInterrupt: print("\nNexis shutting down.")
