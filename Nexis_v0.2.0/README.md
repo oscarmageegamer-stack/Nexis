@@ -9,7 +9,7 @@ From the Nexis project folder in VS Code:
 Then open a new terminal and run `nexis`.
 
 ## Current capabilities
-- Recon: IP information, DNS and approximate public-IP geolocation
+- Recon: IP information, DNS, approximate public-IP geolocation, and public organisation/project footprinting
 - Network: local discovery, IPv4/subnet inference, Nmap host discovery, baseline comparison, investigations
 - Wi-Fi: local adapter information
 - Crypto: hash/encoding identification and file hashing
@@ -17,10 +17,15 @@ Then open a new terminal and run `nexis`.
 - Host: local host information
 - Intelligence core: persistent events, network baselines, change detection and explainable risk assessment
 - Monitoring: `watch network [seconds]`
-- Tool integration: detection of locally installed Nmap, TShark and Metasploit tooling; Nexis does not expose exploit execution
+- Tool integration: detection of locally installed Nmap, TShark, Metasploit, OWASP Amass, SpiderFoot and WhatWeb tooling; Nexis does not expose exploit execution
 - Reporting: JSON session reports
 
-## Useful commands
+## Footprint module
+`recon footprint "Organisation Name" "Country"`
+
+The footprint feature performs a public-web presence search for organisations, brands and projects. It collects public result URLs/titles/snippets from several search categories and is designed for defensive attack-surface and brand research. It deliberately avoids building personal dossiers or aggregating sensitive personal data such as private addresses, phone numbers or personal emails.
+
+Useful commands:
 `network discover`
 `network baseline`
 `network changes`
@@ -28,6 +33,7 @@ Then open a new terminal and run `nexis`.
 `watch network 30`
 `recon geo <public-ip>`
 `recon myip`
+`recon footprint "Organisation Name" "Country"`
 `tools status`
 `tools tshark`
 `events 50`
