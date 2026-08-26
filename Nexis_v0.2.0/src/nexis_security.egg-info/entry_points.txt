@@ -1,0 +1,2 @@
+[console_scripts]
+nexis = nexis.cli:main
