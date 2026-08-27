@@ -12,6 +12,7 @@ from .core.baseline import compare_devices, establish
 from .core.risk import assess_network_change
 from .core.store import load_baseline, recent_events, record_event
 from .core.retention import retention_status, rotate_daily_app_log
+from .core.privacy import privacy_status, privacy_reset
 from .modules import crypto, footprint, geo, host, network, password_audit, recon, social, tools, web, wifi, website
 
 C = "\033[96m"
@@ -32,7 +33,7 @@ def banner() -> None:
 ██╔██╗ ██║█████╗   ╚███╔╝ ██║███████╗
 ██║╚██╗██║██╔══╝   ██╔██╗ ██║╚══════╝
 ██║ ╚████║███████╗██╔╝ ██╗██║███████║
-╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝╚══════╝
+╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝╚═╝╚══════╝
 """, C))
     print(f"  Nexis v{__version__} — Security Intelligence Framework\n")
 
@@ -89,6 +90,8 @@ events [count]
 report
 watch network [seconds]
 retention status
+privacy status
+privacy reset
 
 Footprint/social/website features are passive public-source reconnaissance and do not access private accounts or build personal dossiers.
 """)
@@ -103,7 +106,7 @@ HOST         Local host information
 TOOLS        Detect installed Nmap/TShark/Metasploit
 INTELLIGENCE Baseline, events, monitoring and risk assessment
 REPORT       Session JSON output
-RETENTION    Nexis-owned daily privacy retention""")
+RETENTION    Nexis-owned privacy retention/reset""")
 
     def do_version(self, arg):
         print(f"Nexis v{__version__}")
@@ -126,11 +129,9 @@ RETENTION    Nexis-owned daily privacy retention""")
                 name = p[1]
                 country = " ".join(p[2:])
                 result = footprint.footprint_organization(name, country)
-                record_event("public_footprint", {"name": name, "country": country, "result_count": result["result_count"]})
                 print(json.dumps(result, indent=2))
             elif len(p) == 2 and p[0].lower() == "social":
                 result = social.search_username(p[1])
-                record_event("social_username_recon", {"username": result["username"], "profiles_found": result["public_profiles_found"]})
                 print(json.dumps(result, indent=2))
             else:
                 print(colour("[!] Usage: recon ip|dns|geo <value> | recon myip | recon footprint <organisation-or-project> <country> | recon social <username>", R))
@@ -139,7 +140,6 @@ RETENTION    Nexis-owned daily privacy retention""")
 
     def _discover(self, subnet=None):
         snapshot = network.discover(subnet)
-        record_event("network_snapshot", {"subnet": snapshot["subnet"], "device_count": len(snapshot["devices"])})
         return snapshot
 
     def _print_devices(self, snapshot):
@@ -180,7 +180,6 @@ RETENTION    Nexis-owned daily privacy retention""")
                     print(colour("[?] Device not observed on the current local discovery.", Y))
                     return
                 details = {"target": device, "scope": "local-network-observation", "public_ip_geolocation": None, "assessment": "Observation only; no compromise is inferred."}
-                record_event("investigation", details)
                 print(json.dumps(details, indent=2))
             elif len(p) == 2 and p[0].lower() == "nmap":
                 print(network.nmap_discover(p[1]))
@@ -214,11 +213,9 @@ RETENTION    Nexis-owned daily privacy retention""")
         p = shlex.split(arg)
         try:
             if len(p) == 2 and p[0].lower() == "headers": print(json.dumps(web.headers(p[1]), indent=2))
-            elif len(p) == 2 and p[0].lower() == "inspect":
-                result = website.inspect(p[1]); record_event("web_inspection", {"url": result.get("url"), "status": result.get("status")}); print(json.dumps(result, indent=2))
+            elif len(p) == 2 and p[0].lower() == "inspect": print(json.dumps(website.inspect(p[1]), indent=2))
             elif len(p) == 2 and p[0].lower() == "public-files": print(json.dumps(website.public_files(p[1]), indent=2))
-            elif len(p) == 2 and p[0].lower() == "history":
-                result = website.archive_history(p[1]); record_event("web_history", {"url": p[1], "captures": len(result.get("captures", []))}); print(json.dumps(result, indent=2))
+            elif len(p) == 2 and p[0].lower() == "history": print(json.dumps(website.archive_history(p[1]), indent=2))
             else: print(colour("[!] Usage: web headers|inspect|public-files|history <url>", R))
         except Exception as exc: print(colour(f"[!] {exc}", R))
 
@@ -255,7 +252,6 @@ RETENTION    Nexis-owned daily privacy retention""")
                 if delta.get("added") or delta.get("removed"):
                     print(colour("\n[!] Network baseline change detected", Y))
                     print(json.dumps({"changes": delta, "assessment": assessment}, indent=2))
-                    record_event("network_change", {"changes": delta, "assessment": assessment})
                 previous = snapshot
                 time.sleep(interval)
         except KeyboardInterrupt: print("\n[+] Network watch stopped.")
@@ -269,10 +265,25 @@ RETENTION    Nexis-owned daily privacy retention""")
 
     def do_retention(self, arg):
         p = shlex.split(arg)
+        if p == ["status"]: print(json.dumps(retention_status(), indent=2))
+        else: print(colour("[!] Usage: retention status", R))
+
+    def do_privacy(self, arg):
+        p = shlex.split(arg)
         if p == ["status"]:
-            print(json.dumps(retention_status(), indent=2))
-        else:
-            print(colour("[!] Usage: retention status", R))
+            print(json.dumps(privacy_status(), indent=2))
+            return
+        if p == ["reset"]:
+            print(colour("WARNING: this clears Nexis-owned local state and reports. It does not affect OS, browser, router, cloud, or third-party logs.", Y))
+            confirmation = input("Type RESET to continue: ").strip()
+            if confirmation != "RESET":
+                print(colour("[+] Reset cancelled.", G))
+                return
+            result = privacy_reset()
+            print(json.dumps(result, indent=2))
+            print(colour("[+] Nexis local state reset. Exit and restart Nexis for a fresh session.", G))
+            return
+        print(colour("[!] Usage: privacy status | privacy reset", R))
 
     def do_exit(self, arg): print("Nexis shutting down."); return True
     def do_quit(self, arg): return self.do_exit(arg)
